@@ -4,6 +4,8 @@ Paste a URL and get back a zip with a full-page screenshot of every page on the 
 
 Everything runs on your own computer. Nothing is uploaded anywhere.
 
+> **Heads up: this doesn't work on Vercel (or Netlify, Cloudflare Pages, etc.).** Site Snapper drives a real Chrome browser for minutes at a time. Serverless hosts don't include a browser, cut requests off after a few minutes, and don't keep anything in memory between requests. Run it on your computer (below), or see [Put it online](#put-it-online) for hosts that do work. If you open a Vercel deployment, the page tells you this instead of failing.
+
 ## One-time setup
 
 1. Install **Node.js 18 or newer** from https://nodejs.org (the LTS version is fine).
@@ -25,6 +27,10 @@ npm start
 ```
 
 Your browser opens to `http://localhost:4321`. Paste a URL, hit **Capture site**, and the zip downloads when it's done. Press `Ctrl+C` in Terminal to stop it.
+
+You can type the address however you like: `example.com`, `www.example.com`, `http://example.com/about` and `https://www.example.com/` all work. Site Snapper tries https and http, with and without `www`, and follows redirects to find the version of the site that actually loads.
+
+If something goes wrong, the page shows what happened and what to do about it, with the technical details and a full activity log underneath.
 
 A copy of every zip is also kept in the `output` folder, so nothing is lost if you close the tab.
 
@@ -67,8 +73,26 @@ Broken pages still get captured and are flagged in the header and manifest with 
 - Pop-ups that appear after a delay (newsletter sign-ups, chat widgets) may show up in some shots.
 - Unusual custom accordions that don't use standard markup may stay closed. The common patterns (`<details>`, `aria-expanded` accordions, Bootstrap collapses) are covered.
 
+## Put it online
+
+To get a link you can open from anywhere (or share with your team), host it on a service that runs a normal, always-on server. The included `Dockerfile` installs Node, Chrome and everything Chrome needs.
+
+**Railway** (simplest): New Project → Deploy from GitHub repo → pick this repo. Railway finds the Dockerfile and builds it. Then Settings → Networking → Generate Domain.
+
+**Render**: New → Web Service → connect this repo. Choose *Docker* as the runtime. Use an instance with at least 1 GB of memory; Chrome runs out of room on the 512 MB free tier.
+
+**Fly.io**: `fly launch` in this folder, accept the detected Dockerfile, then `fly deploy`.
+
+Hosted copies can't "Show in folder" (the button is hidden), but the zip still downloads. The `CONCURRENCY` setting (default 2 in Docker, 3 locally) controls how many pages load at once; lower it if the server runs out of memory.
+
+Anyone with the link can use a hosted copy to crawl sites, so keep the URL private or put it behind your host's access controls.
+
 ## Troubleshooting
 
-- **"Executable doesn't exist" error**: run `npx playwright install chromium`.
+The page checks its setup when it loads and explains any problem with step-by-step fixes. The common ones:
+
+- **"The screenshot browser isn't installed yet"** (or `Executable doesn't exist`): run `npx playwright install chromium` in the site-snapper folder, then click **Check again**.
+- **"Can't take screenshots on Vercel"**: see the note at the top of this README.
+- **"Chrome can't start on this machine"** (Linux servers): run `sudo npx playwright install-deps chromium`, or deploy with the Dockerfile.
 - **Port already in use**: `PORT=5000 npm start`.
 - **Don't want the browser to open automatically**: `NO_OPEN=1 npm start`.

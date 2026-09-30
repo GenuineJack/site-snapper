@@ -4,7 +4,9 @@ Paste a URL and get back a zip with a full-page screenshot of every page on the 
 
 Everything runs on your own computer. Nothing is uploaded anywhere.
 
-> **Heads up: this doesn't work on Vercel (or Netlify, Cloudflare Pages, etc.).** Site Snapper drives a real Chrome browser for minutes at a time. Serverless hosts don't include a browser, cut requests off after a few minutes, and don't keep anything in memory between requests. Run it on your computer (below), or see [Put it online](#put-it-online) for hosts that do work. If you open a Vercel deployment, the page tells you this instead of failing.
+> **The live copy runs on Railway: https://site-snapper-production.up.railway.app.** The Vercel address forwards there (see `vercel.json`).
+>
+> **Heads up: the app itself doesn't run on Vercel (or Netlify, Cloudflare Pages, etc.).** Site Snapper drives a real Chrome browser for minutes at a time. Serverless hosts don't include a browser, cut requests off after a few minutes, and don't keep anything in memory between requests. Run it on your computer (below), or see [Put it online](#put-it-online) for hosts that do work. If you open a Vercel deployment, the page tells you this instead of failing.
 
 ## One-time setup
 
@@ -26,7 +28,14 @@ cd ~/Documents/site-snapper
 npm start
 ```
 
-Your browser opens to `http://localhost:4321`. Paste a URL, hit **Capture site**, and the zip downloads when it's done. Press `Ctrl+C` in Terminal to stop it.
+Your browser opens to `http://localhost:4321`. Press `Ctrl+C` in Terminal to stop it.
+
+Using it takes four steps:
+
+1. **Enter a site** and click **Find pages**.
+2. **Review pages**: you get the full list of pages that will be captured. Untick anything you don't need (the filter box plus *Select none* is handy for skipping a whole section like `/blog`).
+3. **Capture**: click **Capture N pages** and watch each page get done.
+4. **Download**: the zip downloads automatically when it's ready, and the **Download zip** button stays there in case you need it again.
 
 You can type the address however you like: `example.com`, `www.example.com`, `http://example.com/about` and `https://www.example.com/` all work. Site Snapper tries https and http, with and without `www`, and follows redirects to find the version of the site that actually loads.
 

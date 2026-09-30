@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "destination": "https://site-snapper-production.up.railway.app/$1",
+      "permanent": false
+    }
+  ]
+}

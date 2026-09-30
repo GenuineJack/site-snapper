@@ -81,18 +81,52 @@
   .activity li { padding: 1px 0; color: #4a4f57; }
   .activity li.bad { color: var(--err); }
   .activity li time { color: var(--muted); margin-right: 8px; }
+  .steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 18px; flex-wrap: wrap; font-size: 13px; }
+  .steps li { display: flex; align-items: center; gap: 7px; padding: 5px 12px 5px 6px; border-radius: 99px; background: var(--card); border: 1px solid var(--line); color: var(--muted); }
+  .steps li b { width: 20px; height: 20px; border-radius: 99px; display: grid; place-items: center; background: var(--line); color: var(--muted); font-size: 11.5px; }
+  .steps li.on { color: var(--ink); border-color: var(--ink); }
+  .steps li.on b { background: var(--ink); color: #fff; }
+  .steps li.done b { background: var(--ok); color: #fff; }
+  #review { display: none; }
+  .review-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .review-head h2 { margin: 0; font-size: 20px; }
+  .review-head p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+  .toolbar { display: flex; gap: 8px; margin: 14px 0 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar input { flex: 1; min-width: 180px; padding: 8px 11px; font-size: 14px; }
+  .toolbar button, .linkish { padding: 7px 12px; font-size: 13px; }
+  ul#found { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+  #found li { border-bottom: 1px solid var(--line); }
+  #found li:last-child { border-bottom: 0; }
+  #found label { display: grid; grid-template-columns: 20px 1fr; gap: 10px; padding: 9px 12px; cursor: pointer; align-items: start; }
+  #found label:hover { background: #faf9f6; }
+  #found input { margin-top: 3px; }
+  #found .u { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+  #found .t { display: block; color: var(--muted); font-size: 12.5px; }
+  #found .t.bad { color: var(--err); }
+  #found li.hidden { display: none; }
+  .review-foot { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+  .review-foot .hint { color: var(--muted); font-size: 13px; }
+  a.accent { display: inline-block; text-decoration: none; font-weight: 600; border-radius: 10px; padding: 11px 20px; }
+  #done .big { font-size: 17px; padding: 14px 26px; }
   @media (max-width: 600px) { .row { flex-direction: column; } .adv { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <main>
   <h1><span>Site</span> Snapper</h1>
-  <p class="sub">Paste a site URL. Every page gets opened up, captured full length, stamped with its URL, and bundled into a zip for review.</p>
+  <p class="sub">Paste a site URL. You'll see every page that will be captured, pick the ones you want, and get a zip of full-length screenshots stamped with their URLs.</p>
+
+  <ol class="steps" id="steps">
+    <li data-step="1"><b>1</b>Enter a site</li>
+    <li data-step="2"><b>2</b>Review pages</li>
+    <li data-step="3"><b>3</b>Capture</li>
+    <li data-step="4"><b>4</b>Download</li>
+  </ol>
 
   <form class="card" id="form">
     <div class="row">
       <input id="url" type="text" placeholder="example.com" autocomplete="off" spellcheck="false" autofocus>
-      <button class="primary" id="go" type="submit">Capture site</button>
+      <button class="primary" id="go" type="submit">Find pages</button>
     </div>
     <div class="opts">
       <label><input type="checkbox" name="vp" value="desktop" checked> Desktop <span style="color:var(--muted)">1440px</span></label>
@@ -143,11 +177,31 @@
     </div>
   </section>
 
+  <section class="card" id="review">
+    <div class="review-head">
+      <div>
+        <h2 id="reviewTitle">Pages found</h2>
+        <p id="reviewSub"></p>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="filter" placeholder="Filter, e.g. /blog" autocomplete="off" spellcheck="false">
+      <button class="ghost" id="selAll" type="button">Select all</button>
+      <button class="ghost" id="selNone" type="button">Select none</button>
+    </div>
+    <ul id="found"></ul>
+    <div class="review-foot">
+      <button class="primary" id="capture" type="button">Capture pages</button>
+      <button class="ghost" id="restart" type="button">Start over</button>
+      <span class="hint" id="reviewHint"></span>
+    </div>
+  </section>
+
   <section class="card" id="done">
-    <h2>Your bundle is ready</h2>
+    <h2>Your screenshots are ready</h2>
     <p id="doneMsg"></p>
     <div class="row">
-      <button class="accent" id="dl" type="button">Download zip</button>
+      <a class="accent big" id="dl" href="#" download>Download zip</a>
       <button class="ghost" id="reveal" type="button">Show in folder</button>
       <button class="ghost" id="again" type="button">Capture another site</button>
     </div>
@@ -170,6 +224,7 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let jobId = null, es = null, received = 0, finished = true, retries = 0, isLocal = true, healthy = true;
 let problemRetry = null;
+let discovered = null; // { url, pages: [{ url, title, status, note }], truncated }
 const rows = new Map();
 
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -180,6 +235,17 @@ function rich(s) {
     .replace(/`([^`]+)`/g, '<code title="Click to copy">$1</code>')
     .replace(/(https?:\/\/[^\s<)]+[^\s<).,])/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 }
+
+// ---------- Steps ----------
+
+function setStep(n) {
+  document.querySelectorAll('#steps li').forEach((li) => {
+    const k = Number(li.dataset.step);
+    li.className = k === n ? 'on' : k < n ? 'done' : '';
+  });
+}
+
+function show(id, on) { $(id).style.display = on ? 'block' : 'none'; }
 
 // ---------- Problem panel ----------
 
@@ -297,7 +363,8 @@ function addLog(msg, bad) {
 
 function setBusy(busy) {
   $('go').disabled = busy || !healthy;
-  $('go').textContent = busy ? 'Capturing…' : 'Capture site';
+  $('go').textContent = busy && !discovered ? 'Finding pages…' : 'Find pages';
+  $('capture').disabled = busy || !healthy;
   $('form').querySelectorAll('input').forEach((i) => (i.disabled = busy));
 }
 
@@ -310,12 +377,8 @@ function stop(statusText) {
   $('cancel').style.display = 'none';
 }
 
-$('form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  if (!finished) return;
-  hideProblem();
-  $('formNote').style.display = 'none';
-  const body = {
+function formOptions() {
+  return {
     url: $('url').value,
     viewports: [...document.querySelectorAll('input[name=vp]:checked')].map((i) => i.value),
     maxPages: $('maxPages').value,
@@ -325,42 +388,136 @@ $('form').addEventListener('submit', async (e) => {
     dismissCookies: $('dismissCookies').checked, pdf: $('pdf').checked,
     useSitemap: $('useSitemap').checked, scopeToPath: $('scopeToPath').checked, keepQuery: $('keepQuery').checked,
   };
-  if (!body.viewports.length) return showProblem({ title: 'Pick at least one viewport', message: 'Tick Desktop, Mobile, or both, then try again.' });
+}
 
-  $('go').disabled = true;
-  $('go').textContent = 'Checking site…';
-  let r;
-  try {
-    r = await api('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  } catch (p) {
-    setBusy(false);
-    return showProblem(p, { retry: checkHealth, retryLabel: 'Check again' });
-  }
-  if (!r.ok) {
-    setBusy(false);
-    const p = r.data.problem || { title: r.data.error || `HTTP ${r.status}` };
-    if (p.blocking) { healthy = false; setBusy(false); return showProblem(p, { setup: true, retry: checkHealth, retryLabel: 'Check again' }); }
-    return showProblem(p, { retry: () => $('form').requestSubmit() });
-  }
-
-  jobId = r.data.id;
+function resetProgress(statusText) {
   received = 0; retries = 0; finished = false;
   rows.clear();
   $('pages').innerHTML = '';
   $('logList').innerHTML = '';
   $('logCount').textContent = '0';
   $('log').textContent = '';
-  $('done').style.display = 'none';
-  $('progress').style.display = 'block';
-  $('cancel').style.display = '';
   $('bar').className = 'bar indeterminate';
-  $('statusText').textContent = 'Finding pages…';
-  $('formNote').textContent = `Capturing ${r.data.url}`;
-  $('formNote').style.display = 'block';
-  addLog(`Capturing ${r.data.url}`);
+  $('cancel').style.display = '';
+  $('statusText').textContent = statusText;
+  show('progress', true);
+}
+
+// Starts a job ('/api/discover' or '/api/jobs') and streams its progress.
+async function startJob(path, body, busyLabel) {
+  hideProblem();
+  $('formNote').style.display = 'none';
+  const btn = path === '/api/discover' ? $('go') : $('capture');
+  btn.disabled = true;
+  btn.textContent = 'Checking site…';
+  let r;
+  try {
+    r = await api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch (p) {
+    setBusy(false); resetButtons();
+    return showProblem(p, { retry: checkHealth, retryLabel: 'Check again' });
+  }
+  resetButtons();
+  if (!r.ok) {
+    setBusy(false);
+    const p = r.data.problem || { title: r.data.error || `HTTP ${r.status}` };
+    if (p.blocking) { healthy = false; setBusy(false); return showProblem(p, { setup: true, retry: checkHealth, retryLabel: 'Check again' }); }
+    return showProblem(p);
+  }
+  jobId = r.data.id;
+  resetProgress(busyLabel);
+  addLog(`Site: ${r.data.url}`);
   setBusy(true);
   listen();
+  return r.data;
+}
+
+function resetButtons() {
+  $('go').textContent = 'Find pages';
+  updateCount();
+}
+
+// Step 1 → 2: find the pages.
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!finished) return;
+  const body = formOptions();
+  if (!body.viewports.length) return showProblem({ title: 'Pick at least one viewport', message: 'Tick Desktop, Mobile, or both, then try again.' });
+  discovered = null;
+  show('review', false); show('done', false);
+  const started = await startJob('/api/discover', body, 'Finding pages…');
+  if (started) {
+    setStep(1);
+    $('formNote').textContent = `Looking for pages on ${started.url}`;
+    $('formNote').style.display = 'block';
+  }
 });
+
+// ---------- Review ----------
+
+function renderReview() {
+  const list = $('found');
+  list.innerHTML = '';
+  for (const p of discovered.pages) {
+    const li = document.createElement('li');
+    const bad = p.status >= 400 || (!p.status && p.note);
+    li.innerHTML = `<label><input type="checkbox" checked><span><span class="u"></span><span class="t${bad ? ' bad' : ''}"></span></span></label>`;
+    li.querySelector('input').value = p.url;
+    li.querySelector('.u').textContent = p.url;
+    li.querySelector('.t').textContent = [p.title, p.note].filter(Boolean).join(' · ');
+    list.append(li);
+  }
+  const n = discovered.pages.length;
+  $('reviewTitle').textContent = `${n} page${n === 1 ? '' : 's'} found`;
+  $('reviewSub').textContent = discovered.truncated
+    ? `Stopped at your ${n}-page limit; the site has more. Raise "Max pages" and click Find pages again to see them all.`
+    : `on ${discovered.url}. Untick anything you don't need, then capture.`;
+  $('filter').value = '';
+  updateCount();
+  show('review', true);
+  setStep(2);
+  $('review').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function checkedUrls() { return [...$('found').querySelectorAll('input:checked')].map((i) => i.value); }
+
+function updateCount() {
+  if (!discovered) return;
+  const n = checkedUrls().length;
+  const vps = [...document.querySelectorAll('input[name=vp]:checked')].length || 1;
+  $('capture').textContent = `Capture ${n} page${n === 1 ? '' : 's'}`;
+  $('capture').disabled = !n || !finished || !healthy;
+  $('reviewHint').textContent = n ? `About ${Math.max(1, Math.round((n * vps * 6) / 60))} min` : 'Tick at least one page';
+}
+
+$('found').addEventListener('change', updateCount);
+document.querySelectorAll('input[name=vp]').forEach((i) => i.addEventListener('change', updateCount));
+$('filter').addEventListener('input', () => {
+  const q = $('filter').value.trim().toLowerCase();
+  $('found').querySelectorAll('li').forEach((li) => li.classList.toggle('hidden', !!q && !li.textContent.toLowerCase().includes(q)));
+});
+// Select all / none act on the rows currently shown, so filter + select works as a bulk action.
+const visibleBoxes = () => [...$('found').querySelectorAll('li:not(.hidden) input')];
+$('selAll').onclick = () => { visibleBoxes().forEach((i) => (i.checked = true)); updateCount(); };
+$('selNone').onclick = () => { visibleBoxes().forEach((i) => (i.checked = false)); updateCount(); };
+$('restart').onclick = () => { discovered = null; show('review', false); show('progress', false); setStep(1); $('url').select(); };
+
+// Step 2 → 3: capture the confirmed pages.
+$('capture').onclick = async () => {
+  if (!finished || !discovered) return;
+  const urls = checkedUrls();
+  if (!urls.length) return;
+  const body = { ...formOptions(), url: discovered.url, urls };
+  if (!body.viewports.length) return showProblem({ title: 'Pick at least one viewport', message: 'Tick Desktop, Mobile, or both, then try again.' });
+  const started = await startJob('/api/jobs', body, `Capturing ${urls.length} page${urls.length === 1 ? '' : 's'}…`);
+  if (started) {
+    setStep(3);
+    show('review', false);
+    $('progress').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+};
+
+// ---------- Event stream ----------
 
 function listen() {
   es = new EventSource(`/api/jobs/${jobId}/events?since=${received}`);
@@ -380,12 +537,12 @@ async function reconnect() {
   try {
     const r = await api(`/api/jobs/${jobId}`);
     if (r.status === 404) {
-      stop('Capture lost');
+      stop('Lost');
       return showProblem({
-        title: 'The server lost track of this capture',
-        message: "The Site Snapper server restarted in the middle of the capture (or it's on a host that doesn't keep work in memory between requests), so its progress is gone.",
-        steps: ['Start the capture again.', 'If this keeps happening on a hosted copy, run it on your computer or deploy it with the Dockerfile (see the README).'],
-      }, { retry: () => $('form').requestSubmit() });
+        title: 'The server lost track of this job',
+        message: "The Site Snapper server restarted in the middle of the job, so its progress is gone.",
+        steps: ['Click "Find pages" to start again.'],
+      });
     }
   } catch (p) {
     return reconnect();
@@ -395,6 +552,19 @@ async function reconnect() {
 
 function handle(ev) {
   if (ev.type === 'log') { $('log').textContent = ev.msg; addLog(ev.msg); }
+  if (ev.type === 'found') {
+    const li = row(ev.url);
+    li.querySelector('.dot').className = 'dot ' + (ev.status >= 400 || !ev.status ? 'skip' : 'ok');
+    li.querySelector('.t').textContent = [ev.title, ev.note].filter(Boolean).join(' · ');
+    $('statusText').textContent = `Finding pages… ${ev.count} found`;
+  }
+  if (ev.type === 'discovered') {
+    stop(`Found ${ev.pages.length} page${ev.pages.length === 1 ? '' : 's'}`);
+    discovered = ev;
+    $('formNote').style.display = 'none';
+    show('progress', false);
+    renderReview();
+  }
   if (ev.type === 'page-start') row(ev.url);
   if (ev.type === 'page-done') {
     const li = row(ev.url);
@@ -405,12 +575,12 @@ function handle(ev) {
     if (ev.failed) addLog(`Failed: ${ev.url} (${ev.note})`, true);
     else if (ev.skipped) addLog(`Skipped: ${ev.url} (${ev.note})`);
     else addLog(`Captured: ${ev.url}${ev.note ? ` (${ev.note})` : ''}`);
-    $('statusText').textContent = `${ev.done} page${ev.done === 1 ? '' : 's'} captured` + (ev.queued > ev.done ? ` · ${ev.queued - ev.done} to go` : '');
+    $('statusText').textContent = `${ev.done} of ${ev.queued} page${ev.queued === 1 ? '' : 's'} captured`;
     $('bar').className = 'bar';
     $('bar').firstElementChild.style.width = Math.round((ev.done / Math.max(ev.queued, 1)) * 100) + '%';
   }
   if (ev.type === 'packaging') {
-    $('statusText').textContent = 'Packaging…';
+    $('statusText').textContent = 'Building the zip…';
     $('log').textContent = ev.msg;
     addLog(ev.msg);
     $('bar').className = 'bar indeterminate';
@@ -419,19 +589,23 @@ function handle(ev) {
   if (ev.type === 'done') {
     stop('Finished');
     $('bar').firstElementChild.style.width = '100%';
-    $('doneMsg').textContent = `${ev.pages} pages, ${ev.screenshots} screenshots, ${ev.sizeMB} MB · ${ev.fileName}`;
-    $('done').style.display = 'block';
+    $('doneMsg').textContent = `${ev.pages} pages, ${ev.screenshots} screenshots · ${ev.fileName}`;
+    $('dl').href = `/api/jobs/${jobId}/download`;
+    $('dl').textContent = `Download zip (${ev.sizeMB} MB)`;
+    show('done', true);
+    setStep(4);
     $('log').textContent = isLocal ? 'A copy is also saved in the output folder inside Site Snapper.' : '';
     addLog(`Done: ${ev.fileName}`);
-    window.location.href = `/api/jobs/${jobId}/download`;
+    $('done').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('dl').click(); // start the download right away; the button stays for another try
   }
   if (ev.type === 'error') {
-    if (ev.cancelled) { stop('Cancelled'); addLog('Cancelled.'); return; }
-    stop('Capture stopped');
+    if (ev.cancelled) { stop('Cancelled'); addLog('Cancelled.'); if (discovered) show('review', true); return; }
+    stop('Stopped');
     addLog(ev.msg, true);
     const p = ev.problem || { title: ev.msg };
     if (p.blocking) { healthy = false; setBusy(false); showProblem(p, { setup: true, retry: checkHealth, retryLabel: 'Check again' }); }
-    else showProblem(p, { retry: () => $('form').requestSubmit() });
+    else showProblem(p, { retry: () => (discovered ? $('capture').click() : $('form').requestSubmit()) });
   }
 }
 
@@ -439,10 +613,15 @@ $('cancel').onclick = async () => {
   $('statusText').textContent = 'Cancelling…';
   try { await api(`/api/jobs/${jobId}/cancel`, { method: 'POST' }); } catch (p) { showProblem(p); }
 };
-$('dl').onclick = () => { window.location.href = `/api/jobs/${jobId}/download`; };
 $('reveal').onclick = () => fetch(`/api/jobs/${jobId}/reveal`, { method: 'POST' });
-$('again').onclick = () => { $('done').style.display = 'none'; $('progress').style.display = 'none'; $('url').select(); };
+$('again').onclick = () => {
+  discovered = null;
+  show('done', false); show('progress', false); show('review', false);
+  setStep(1);
+  $('url').select();
+};
 
+setStep(1);
 checkHealth();
 </script>
 </body>

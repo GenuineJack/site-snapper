@@ -5,7 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { exec } = require('child_process');
 const express = require('express');
-const { runJob, checkBrowser } = require('./lib/crawler');
+const { runJob, discoverPages, checkBrowser } = require('./lib/crawler');
 const { resolveStartUrl } = require('./lib/url');
 const { serverlessHost, serverlessProblem, genericProblem } = require('./lib/problems');
 
@@ -36,7 +36,11 @@ app.get('/api/health', async (req, res) => {
   res.status(p ? 503 : 200).json({ ok: !p, local: IS_LOCAL, problem: p || null });
 });
 
-app.post('/api/jobs', async (req, res) => {
+// Both steps share this: validate the request, then run `runner` as a background
+// job whose progress streams to the page over /api/jobs/:id/events.
+//   kind 'discover' finds the pages and ends with a 'discovered' event.
+//   kind 'capture' screenshots them and ends with a 'done' event.
+async function startJob(req, res, kind) {
   const b = req.body || {};
   const authUser = String(b.authUser || '').trim();
   const authPass = String(b.authPass || '');
@@ -51,10 +55,18 @@ app.post('/api/jobs', async (req, res) => {
   if (start.problem) return sendProblem(res, 400, start.problem);
   const url = start.url;
 
+  // A capture of pages the person already reviewed and confirmed.
+  let urls = null;
+  if (kind === 'capture' && Array.isArray(b.urls)) {
+    urls = [...new Set(b.urls.map(String).filter((u) => { try { return /^https?:$/.test(new URL(u).protocol); } catch { return false; } }))].slice(0, 1000);
+    if (!urls.length) return sendProblem(res, 400, { title: 'No pages selected', message: 'Tick at least one page in the list, then capture again.', steps: [] });
+  }
+
   const viewports = (Array.isArray(b.viewports) ? b.viewports : ['desktop']).filter((v) => ['desktop', 'mobile'].includes(v));
   const options = {
     url,
-    maxPages: clampInt(b.maxPages, 1, 1000, 100),
+    urls,
+    maxPages: urls ? urls.length : clampInt(b.maxPages, 1, 1000, 100),
     concurrency: clampInt(b.concurrency ?? process.env.CONCURRENCY, 1, 6, 3),
     viewports: viewports.length ? viewports : ['desktop'],
     useSitemap: b.useSitemap !== false,
@@ -69,8 +81,11 @@ app.post('/api/jobs', async (req, res) => {
     authPass,
   };
 
+  // Forget jobs older than a day so a long-running server doesn't grow forever.
+  for (const [jid, j] of jobs) if (Date.now() - j.created > 86400000 && j.status !== 'running') jobs.delete(jid);
+
   const id = crypto.randomUUID();
-  const job = { id, options, events: [], clients: new Set(), status: 'running', result: null, cancelled: false };
+  const job = { id, kind, options, events: [], clients: new Set(), status: 'running', result: null, cancelled: false, created: Date.now() };
   jobs.set(id, job);
 
   const emit = (ev) => {
@@ -80,8 +95,11 @@ app.post('/api/jobs', async (req, res) => {
   };
   start.notes.forEach((msg) => emit({ type: 'log', msg }));
 
-  runJob(job, emit)
-    .then((result) => { job.status = 'done'; job.result = result; emit({ type: 'done', ...result, zipPath: undefined }); })
+  const run = kind === 'discover'
+    ? discoverPages(job, emit).then((r) => emit({ type: 'discovered', ...r }))
+    : runJob(job, emit).then((r) => { job.result = r; emit({ type: 'done', ...r, zipPath: undefined }); });
+  run
+    .then(() => { job.status = 'done'; })
     .catch((err) => {
       job.status = 'error';
       if (err.message === 'Cancelled') return emit({ type: 'error', msg: 'Cancelled.', cancelled: true });
@@ -91,7 +109,10 @@ app.post('/api/jobs', async (req, res) => {
     });
 
   res.json({ id, url });
-});
+}
+
+app.post('/api/discover', (req, res) => startJob(req, res, 'discover'));
+app.post('/api/jobs', (req, res) => startJob(req, res, 'capture'));
 
 app.get('/api/jobs/:id', (req, res) => {
   const job = jobs.get(req.params.id);

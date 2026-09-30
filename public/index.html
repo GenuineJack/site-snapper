@@ -52,14 +52,35 @@
   #pages .t { color: var(--muted); font-size: 12.5px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #pages .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
   .dot { width: 10px; height: 10px; border-radius: 99px; background: var(--line); margin-top: 5px; }
-  .dot.ok { background: var(--ok); } .dot.skip { background: var(--warn); } .dot.run { background: var(--accent); animation: pulse 1s infinite; }
+  .dot.ok { background: var(--ok); } .dot.skip { background: var(--warn); } .dot.fail { background: var(--err); } .dot.run { background: var(--accent); animation: pulse 1s infinite; }
   @keyframes pulse { 50% { opacity: .35; } }
   #done { display: none; background: #fff8e6; border-color: #f1d9a0; }
   #done h2 { margin: 0 0 4px; font-size: 20px; }
   #done p { margin: 0 0 16px; color: var(--muted); }
   #done .row { flex-wrap: wrap; }
-  .err { color: var(--err); margin-top: 12px; display: none; }
   .log { font-size: 12.5px; color: var(--muted); margin-top: 10px; min-height: 1.5em; }
+  .note { font-size: 13px; color: var(--muted); margin: 12px 0 0; display: none; }
+  .problem code { font-family: var(--mono); font-size: 12.5px; background: #f1efe9; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; cursor: copy; }
+  .problem a { color: inherit; }
+  .problem { display: none; border-color: #efc2bb; background: #fff7f5; }
+  .problem.setup { border-color: #f1d9a0; background: #fffaf0; }
+  .p-head { display: flex; gap: 14px; align-items: flex-start; }
+  .p-icon { flex: none; width: 30px; height: 30px; border-radius: 99px; background: var(--err); color: #fff; font-weight: 700; display: grid; place-items: center; }
+  .problem.setup .p-icon { background: var(--warn); }
+  .p-head h2 { margin: 2px 0 4px; font-size: 18px; }
+  .p-head p { margin: 0; color: #4a4f57; }
+  .p-close { margin-left: auto; background: transparent; color: var(--muted); padding: 2px 8px; font-size: 20px; line-height: 1; }
+  .problem h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
+  .problem ol { margin: 0; padding-left: 22px; }
+  .problem li { margin: 5px 0; }
+  .problem pre, .activity ol { font-family: var(--mono); font-size: 12px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
+  .p-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .p-actions button { padding: 7px 14px; font-size: 13px; }
+  .activity { margin-top: 12px; }
+  .activity ol { list-style: none; }
+  .activity li { padding: 1px 0; color: #4a4f57; }
+  .activity li.bad { color: var(--err); }
+  .activity li time { color: var(--muted); margin-right: 8px; }
   @media (max-width: 600px) { .row { flex-direction: column; } .adv { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -70,7 +91,7 @@
 
   <form class="card" id="form">
     <div class="row">
-      <input id="url" type="text" placeholder="https://example.com" autocomplete="off" spellcheck="false" autofocus>
+      <input id="url" type="text" placeholder="example.com" autocomplete="off" spellcheck="false" autofocus>
       <button class="primary" id="go" type="submit">Capture site</button>
     </div>
     <div class="opts">
@@ -105,8 +126,22 @@
         </div>
       </div>
     </details>
-    <div class="err" id="formErr"></div>
+    <p class="note" id="formNote"></p>
   </form>
+
+  <section class="card problem" id="problem" role="alert">
+    <div class="p-head">
+      <span class="p-icon">!</span>
+      <div><h2 id="pTitle"></h2><p id="pMsg"></p></div>
+      <button class="p-close" id="pClose" type="button" aria-label="Dismiss">×</button>
+    </div>
+    <div id="pStepsWrap"><h3>What to do</h3><ol id="pSteps"></ol></div>
+    <details id="pDetailsWrap"><summary>Technical details</summary><pre id="pDetails"></pre></details>
+    <div class="p-actions">
+      <button class="ghost" id="pRetry" type="button">Check again</button>
+      <button class="ghost" id="pCopy" type="button">Copy details</button>
+    </div>
+  </section>
 
   <section class="card" id="done">
     <h2>Your bundle is ready</h2>
@@ -126,15 +161,120 @@
     <div class="bar indeterminate" id="bar"><div></div></div>
     <ul id="pages"></ul>
     <div class="log" id="log"></div>
+    <details class="activity" id="activity"><summary>Activity log (<span id="logCount">0</span>)</summary><ol id="logList"></ol></details>
   </section>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let jobId = null, es = null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let jobId = null, es = null, received = 0, finished = true, retries = 0, isLocal = true, healthy = true;
+let problemRetry = null;
 const rows = new Map();
 
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// Escapes text, turns `commands` into click-to-copy code and links into links.
+function rich(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, '<code title="Click to copy">$1</code>')
+    .replace(/(https?:\/\/[^\s<)]+[^\s<).,])/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+}
+
+// ---------- Problem panel ----------
+
+function showProblem(p, { setup = false, retry = null, retryLabel = 'Try again' } = {}) {
+  $('pTitle').textContent = p.title || 'Something went wrong';
+  $('pMsg').innerHTML = rich(p.message || '');
+  $('pSteps').innerHTML = (p.steps || []).map((s) => `<li>${rich(s)}</li>`).join('');
+  $('pStepsWrap').style.display = p.steps && p.steps.length ? '' : 'none';
+  $('pDetails').textContent = p.details || '';
+  $('pDetailsWrap').style.display = p.details ? '' : 'none';
+  $('pDetailsWrap').open = false;
+  problemRetry = retry;
+  $('pRetry').style.display = retry ? '' : 'none';
+  $('pRetry').textContent = retryLabel;
+  $('problem').className = 'card problem' + (setup ? ' setup' : '');
+  $('problem').dataset.setup = setup ? '1' : '';
+  $('problem').style.display = 'block';
+  $('problem').lastProblem = p;
+  $('problem').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function hideProblem() { $('problem').style.display = 'none'; }
+
+$('pClose').onclick = hideProblem;
+$('pRetry').onclick = () => problemRetry && problemRetry();
+$('pCopy').onclick = async () => {
+  const p = $('problem').lastProblem || {};
+  const text = [p.title, p.message, ...(p.steps || []).map((s, i) => `${i + 1}. ${s}`), p.details && `\nDetails:\n${p.details}`].filter(Boolean).join('\n');
+  try { await navigator.clipboard.writeText(text); $('pCopy').textContent = 'Copied'; setTimeout(() => ($('pCopy').textContent = 'Copy details'), 1500); } catch {}
+};
+$('problem').addEventListener('click', async (e) => {
+  if (e.target.tagName !== 'CODE') return;
+  try { await navigator.clipboard.writeText(e.target.textContent); e.target.title = 'Copied'; } catch {}
+});
+
+function serverDownProblem(detail) {
+  return {
+    title: "Couldn't reach the Site Snapper server",
+    message: 'This page loaded, but the server behind it did not answer.',
+    steps: [
+      'If you started Site Snapper with `npm start`, check that the Terminal window is still open. If it stopped, run `npm start` again.',
+      'Then refresh this page.',
+    ],
+    details: detail,
+  };
+}
+
+function noServerProblem(detail) {
+  return {
+    title: "Site Snapper's server isn't running here",
+    message: 'This page is being served, but the part that takes screenshots is missing (the /api routes return "not found"). That happens when the project is hosted as a static site, or on a host that can\'t run it.',
+    steps: [
+      'Run it on your computer: `npm install`, then `npm start`, then open http://localhost:4321.',
+      'Or host it on a service that runs a normal server (Railway, Render or Fly.io) using the included Dockerfile. See "Put it online" in the README.',
+    ],
+    details: detail,
+    blocking: true,
+  };
+}
+
+// fetch wrapper: always resolves to { ok, status, data } or throws a problem object.
+async function api(path, opts) {
+  let res;
+  try { res = await fetch(path, opts); } catch (err) { throw serverDownProblem(String(err)); }
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch {
+    if (res.status === 404) throw noServerProblem(`${opts?.method || 'GET'} ${path} → HTTP 404`);
+    if (res.status === 504 || res.status === 502) throw serverDownProblem(`HTTP ${res.status}: the server took too long or crashed.\n${text.slice(0, 300)}`);
+    throw serverDownProblem(`HTTP ${res.status} ${res.statusText}\n${text.slice(0, 300)}`);
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// ---------- Setup check ----------
+
+async function checkHealth() {
+  try {
+    const { status, data } = await api('/api/health');
+    if (status === 404) throw noServerProblem('GET /api/health → HTTP 404');
+    isLocal = !!data.local;
+    $('reveal').style.display = isLocal ? '' : 'none';
+    healthy = data.ok;
+    if (data.ok) {
+      if ($('problem').dataset.setup) hideProblem();
+    } else {
+      showProblem(data.problem, { setup: true, retry: checkHealth, retryLabel: 'Check again' });
+    }
+  } catch (p) {
+    healthy = !p.blocking;
+    showProblem(p, { setup: true, retry: checkHealth, retryLabel: 'Check again' });
+  }
+  if (finished) setBusy(false);
+}
+
+// ---------- Progress ----------
 
 function row(url) {
   if (rows.has(url)) return rows.get(url);
@@ -146,15 +286,35 @@ function row(url) {
   return li;
 }
 
+function addLog(msg, bad) {
+  const li = document.createElement('li');
+  if (bad) li.className = 'bad';
+  li.innerHTML = `<time>${new Date().toLocaleTimeString()}</time>${esc(msg)}`;
+  $('logList').append(li);
+  $('logCount').textContent = $('logList').children.length;
+  $('logList').scrollTop = $('logList').scrollHeight;
+}
+
 function setBusy(busy) {
-  $('go').disabled = busy;
+  $('go').disabled = busy || !healthy;
   $('go').textContent = busy ? 'Capturing…' : 'Capture site';
   $('form').querySelectorAll('input').forEach((i) => (i.disabled = busy));
 }
 
+function stop(statusText) {
+  finished = true;
+  if (es) es.close();
+  setBusy(false);
+  $('statusText').textContent = statusText;
+  $('bar').className = 'bar';
+  $('cancel').style.display = 'none';
+}
+
 $('form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  $('formErr').style.display = 'none';
+  if (!finished) return;
+  hideProblem();
+  $('formNote').style.display = 'none';
   const body = {
     url: $('url').value,
     viewports: [...document.querySelectorAll('input[name=vp]:checked')].map((i) => i.value),
@@ -165,72 +325,125 @@ $('form').addEventListener('submit', async (e) => {
     dismissCookies: $('dismissCookies').checked, pdf: $('pdf').checked,
     useSitemap: $('useSitemap').checked, scopeToPath: $('scopeToPath').checked, keepQuery: $('keepQuery').checked,
   };
-  if (!body.viewports.length) { $('formErr').textContent = 'Pick at least one viewport.'; $('formErr').style.display = 'block'; return; }
-  const res = await fetch('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const data = await res.json();
-  if (!res.ok) { $('formErr').textContent = data.error; $('formErr').style.display = 'block'; return; }
+  if (!body.viewports.length) return showProblem({ title: 'Pick at least one viewport', message: 'Tick Desktop, Mobile, or both, then try again.' });
 
-  jobId = data.id;
+  $('go').disabled = true;
+  $('go').textContent = 'Checking site…';
+  let r;
+  try {
+    r = await api('/api/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch (p) {
+    setBusy(false);
+    return showProblem(p, { retry: checkHealth, retryLabel: 'Check again' });
+  }
+  if (!r.ok) {
+    setBusy(false);
+    const p = r.data.problem || { title: r.data.error || `HTTP ${r.status}` };
+    if (p.blocking) { healthy = false; setBusy(false); return showProblem(p, { setup: true, retry: checkHealth, retryLabel: 'Check again' }); }
+    return showProblem(p, { retry: () => $('form').requestSubmit() });
+  }
+
+  jobId = r.data.id;
+  received = 0; retries = 0; finished = false;
   rows.clear();
   $('pages').innerHTML = '';
+  $('logList').innerHTML = '';
+  $('logCount').textContent = '0';
   $('log').textContent = '';
   $('done').style.display = 'none';
   $('progress').style.display = 'block';
   $('cancel').style.display = '';
   $('bar').className = 'bar indeterminate';
   $('statusText').textContent = 'Finding pages…';
+  $('formNote').textContent = `Capturing ${r.data.url}`;
+  $('formNote').style.display = 'block';
+  addLog(`Capturing ${r.data.url}`);
   setBusy(true);
   listen();
 });
 
 function listen() {
-  es = new EventSource(`/api/jobs/${jobId}/events`);
-  es.onmessage = (m) => {
-    const ev = JSON.parse(m.data);
-    if (ev.type === 'log') $('log').textContent = ev.msg;
-    if (ev.type === 'page-start') row(ev.url);
-    if (ev.type === 'page-done') {
-      const li = row(ev.url);
-      li.querySelector('.dot').className = 'dot ' + (ev.skipped || !ev.shots ? 'skip' : 'ok');
-      li.querySelector('.t').textContent = ev.note || ev.title || '';
-      li.querySelector('.meta').textContent = ev.skipped ? 'skipped' : `${ev.shots} shot${ev.shots === 1 ? '' : 's'}`;
-      $('statusText').textContent = `${ev.done} page${ev.done === 1 ? '' : 's'} captured` + (ev.queued > ev.done ? ` · ${ev.queued - ev.done} to go` : '');
-      $('bar').className = 'bar';
-      $('bar').firstElementChild.style.width = Math.round((ev.done / Math.max(ev.queued, 1)) * 100) + '%';
+  es = new EventSource(`/api/jobs/${jobId}/events?since=${received}`);
+  es.onmessage = (m) => { received++; retries = 0; handle(JSON.parse(m.data)); };
+  es.onerror = () => { if (finished) return; es.close(); reconnect(); };
+}
+
+// The progress stream dropped: work out whether the job still exists, then resume it.
+async function reconnect() {
+  retries++;
+  if (retries > 6) {
+    stop('Connection lost');
+    return showProblem(serverDownProblem('The progress stream dropped 6 times in a row.'), { retry: checkHealth, retryLabel: 'Check again' });
+  }
+  addLog(`Lost connection to the server, reconnecting (attempt ${retries})…`, true);
+  await sleep(Math.min(8000, 1000 * retries));
+  try {
+    const r = await api(`/api/jobs/${jobId}`);
+    if (r.status === 404) {
+      stop('Capture lost');
+      return showProblem({
+        title: 'The server lost track of this capture',
+        message: "The Site Snapper server restarted in the middle of the capture (or it's on a host that doesn't keep work in memory between requests), so its progress is gone.",
+        steps: ['Start the capture again.', 'If this keeps happening on a hosted copy, run it on your computer or deploy it with the Dockerfile (see the README).'],
+      }, { retry: () => $('form').requestSubmit() });
     }
-    if (ev.type === 'packaging') {
-      $('statusText').textContent = 'Packaging…';
-      $('log').textContent = ev.msg;
-      $('bar').className = 'bar indeterminate';
-      $('cancel').style.display = 'none';
-    }
-    if (ev.type === 'done') {
-      es.close(); setBusy(false);
-      $('bar').className = 'bar'; $('bar').firstElementChild.style.width = '100%';
-      $('statusText').textContent = 'Finished';
-      $('cancel').style.display = 'none';
-      $('doneMsg').textContent = `${ev.pages} pages, ${ev.screenshots} screenshots, ${ev.sizeMB} MB · ${ev.fileName}`;
-      $('done').style.display = 'block';
-      $('log').textContent = 'A copy is also saved in the output folder inside Site Snapper.';
-      window.location.href = `/api/jobs/${jobId}/download`;
-    }
-    if (ev.type === 'error') {
-      es.close(); setBusy(false);
-      $('statusText').textContent = ev.msg === 'Cancelled.' ? 'Cancelled' : 'Something went wrong';
-      $('bar').className = 'bar';
-      $('cancel').style.display = 'none';
-      $('log').textContent = ev.msg;
-    }
-  };
+  } catch (p) {
+    return reconnect();
+  }
+  listen();
+}
+
+function handle(ev) {
+  if (ev.type === 'log') { $('log').textContent = ev.msg; addLog(ev.msg); }
+  if (ev.type === 'page-start') row(ev.url);
+  if (ev.type === 'page-done') {
+    const li = row(ev.url);
+    const cls = ev.failed ? 'fail' : ev.skipped || !ev.shots ? 'skip' : 'ok';
+    li.querySelector('.dot').className = 'dot ' + cls;
+    li.querySelector('.t').textContent = ev.note || ev.title || '';
+    li.querySelector('.meta').textContent = ev.failed ? 'failed' : ev.skipped ? 'skipped' : `${ev.shots} shot${ev.shots === 1 ? '' : 's'}`;
+    if (ev.failed) addLog(`Failed: ${ev.url} (${ev.note})`, true);
+    else if (ev.skipped) addLog(`Skipped: ${ev.url} (${ev.note})`);
+    else addLog(`Captured: ${ev.url}${ev.note ? ` (${ev.note})` : ''}`);
+    $('statusText').textContent = `${ev.done} page${ev.done === 1 ? '' : 's'} captured` + (ev.queued > ev.done ? ` · ${ev.queued - ev.done} to go` : '');
+    $('bar').className = 'bar';
+    $('bar').firstElementChild.style.width = Math.round((ev.done / Math.max(ev.queued, 1)) * 100) + '%';
+  }
+  if (ev.type === 'packaging') {
+    $('statusText').textContent = 'Packaging…';
+    $('log').textContent = ev.msg;
+    addLog(ev.msg);
+    $('bar').className = 'bar indeterminate';
+    $('cancel').style.display = 'none';
+  }
+  if (ev.type === 'done') {
+    stop('Finished');
+    $('bar').firstElementChild.style.width = '100%';
+    $('doneMsg').textContent = `${ev.pages} pages, ${ev.screenshots} screenshots, ${ev.sizeMB} MB · ${ev.fileName}`;
+    $('done').style.display = 'block';
+    $('log').textContent = isLocal ? 'A copy is also saved in the output folder inside Site Snapper.' : '';
+    addLog(`Done: ${ev.fileName}`);
+    window.location.href = `/api/jobs/${jobId}/download`;
+  }
+  if (ev.type === 'error') {
+    if (ev.cancelled) { stop('Cancelled'); addLog('Cancelled.'); return; }
+    stop('Capture stopped');
+    addLog(ev.msg, true);
+    const p = ev.problem || { title: ev.msg };
+    if (p.blocking) { healthy = false; setBusy(false); showProblem(p, { setup: true, retry: checkHealth, retryLabel: 'Check again' }); }
+    else showProblem(p, { retry: () => $('form').requestSubmit() });
+  }
 }
 
 $('cancel').onclick = async () => {
   $('statusText').textContent = 'Cancelling…';
-  await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+  try { await api(`/api/jobs/${jobId}/cancel`, { method: 'POST' }); } catch (p) { showProblem(p); }
 };
 $('dl').onclick = () => { window.location.href = `/api/jobs/${jobId}/download`; };
 $('reveal').onclick = () => fetch(`/api/jobs/${jobId}/reveal`, { method: 'POST' });
 $('again').onclick = () => { $('done').style.display = 'none'; $('progress').style.display = 'none'; $('url').select(); };
+
+checkHealth();
 </script>
 </body>
 </html>

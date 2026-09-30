@@ -135,6 +135,25 @@ app.post('/api/jobs/:id/reveal', (req, res) => {
   res.json({ ok: true });
 });
 
+// Optional deploy check: set SELFTEST_URL and the server captures that site once
+// at startup (up to 3 pages) and logs the outcome. Unset it again afterwards.
+async function selfTest(input) {
+  const log = (m) => console.log(`  Self-test: ${m}`);
+  const start = await resolveStartUrl(input);
+  if (start.problem) return log(`FAILED, ${start.problem.title} (${start.problem.details})`);
+  log(`capturing ${start.url}`);
+  const opts = { url: start.url, maxPages: 3, concurrency: 2, viewports: ['desktop'], useSitemap: true, expand: true, captureTabs: false, dismissCookies: true, pdf: true, keepQuery: false, scopePath: '', exclude: [], authUser: '', authPass: '' };
+  const pages = [];
+  try {
+    const r = await runJob({ options: opts, cancelled: false }, (ev) => { if (ev.type === 'page-done') pages.push(`${ev.url} ${ev.failed ? 'FAILED' : ev.skipped ? 'skipped' : 'ok'}${ev.note ? ` (${ev.note})` : ''}`); });
+    pages.forEach((p) => log(p));
+    log(`PASSED, ${r.pages} pages, ${r.screenshots} screenshots, ${r.sizeMB} MB zip`);
+  } catch (err) {
+    pages.forEach((p) => log(p));
+    log(`FAILED, ${(err.problem && err.problem.title) || err.message}`);
+  }
+}
+
 app.listen(PORT, HOST, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`\n  Site Snapper is running at ${url}\n  Press Ctrl+C to stop.\n`);
@@ -142,6 +161,7 @@ app.listen(PORT, HOST, () => {
     checkBrowser().then((p) => {
       if (p) console.log(`  ⚠ ${p.title}\n    ${p.steps.join('\n    ').replace(/`/g, '')}\n`);
       else console.log('  Browser check: OK, Chrome starts and is ready for captures.\n');
+      if (!p && process.env.SELFTEST_URL) selfTest(process.env.SELFTEST_URL);
     });
   }
   if (IS_LOCAL && !process.env.NO_OPEN) {

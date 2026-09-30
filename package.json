@@ -1,0 +1,21 @@
+{
+  "name": "site-snapper",
+  "version": "1.0.0",
+  "description": "Crawl a site, open hidden content, capture URL-stamped full-page screenshots, and bundle them into a zip for review.",
+  "main": "server.js",
+  "scripts": {
+    "postinstall": "playwright install chromium",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "express": "^5.2.1",
+    "pdf-lib": "^1.17.1",
+    "playwright": "^1.63.0",
+    "sharp": "^0.35.5"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}

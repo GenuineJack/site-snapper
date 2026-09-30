@@ -32,7 +32,8 @@ function sendProblem(res, status, p) {
 // Setup check the page runs on load, so problems show up before anyone clicks.
 app.get('/api/health', async (req, res) => {
   const p = SERVERLESS ? serverlessProblem(SERVERLESS, `Detected ${SERVERLESS} environment`) : await checkBrowser();
-  res.json({ ok: !p, local: IS_LOCAL, problem: p || null });
+  // 503 when captures can't work, so hosts like Railway won't switch traffic to a broken deploy.
+  res.status(p ? 503 : 200).json({ ok: !p, local: IS_LOCAL, problem: p || null });
 });
 
 app.post('/api/jobs', async (req, res) => {
@@ -140,6 +141,7 @@ app.listen(PORT, HOST, () => {
   if (!SERVERLESS) {
     checkBrowser().then((p) => {
       if (p) console.log(`  ⚠ ${p.title}\n    ${p.steps.join('\n    ').replace(/`/g, '')}\n`);
+      else console.log('  Browser check: OK, Chrome starts and is ready for captures.\n');
     });
   }
   if (IS_LOCAL && !process.env.NO_OPEN) {
